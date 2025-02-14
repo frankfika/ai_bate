@@ -63,6 +63,25 @@ interface Judge {
     cons: string[];
     suggestions: string[];
   };
+  scoreReasons?: {
+    pro: {
+      logic: string;
+      evidence: string;
+      rebuttal: string;
+      expression: string;
+    };
+    con: {
+      logic: string;
+      evidence: string;
+      rebuttal: string;
+      expression: string;
+    };
+  };
+  overallComment?: string;
+  recommendedWinner?: {
+    side: "pro" | "con";
+    reason: string;
+  } | null;
   animationState?: {
     isScoring: boolean;
     currentCategory?: ScoreCategory;
@@ -607,23 +626,34 @@ export default function DebatePage() {
   const renderProgress = () => (
     <Card className="bg-black/50 backdrop-blur-md border-gray-800 p-6 flex-shrink-0">
       <div className="flex flex-col items-center mb-6">
-        <div className="text-4xl font-bold text-yellow-400 mb-2">
-          第 {Math.floor((messages.length + 1) / 2)} 轮
-        </div>
-        <div className="text-lg text-gray-400">共 {maxRounds} 轮</div>
+        {debateStatusData?.status === "judging" ? (
+          <div className="text-2xl font-bold text-yellow-400 mb-2 flex items-center gap-2">
+            <Scale className="h-6 w-6 animate-bounce" />
+            评委正在评分中
+          </div>
+        ) : (
+          <>
+            <div className="text-4xl font-bold text-yellow-400 mb-2">
+              第 {Math.floor((messages.length + 1) / 2)} 轮
+            </div>
+            <div className="text-lg text-gray-400">共 {maxRounds} 轮</div>
+          </>
+        )}
       </div>
       
       <div className="space-y-6">
         <div>
           <div className="flex justify-between mb-2">
             <span className="text-lg font-medium text-yellow-400">总进度</span>
-            <span className="text-lg font-medium text-yellow-400">{Math.round(progress)}%</span>
+            <span className="text-lg font-medium text-yellow-400">
+              {debateStatusData?.status === "judging" ? "100%" : `${Math.round(progress)}%`}
+            </span>
           </div>
           <div className="w-full bg-gray-900/50 rounded-full h-4 p-1">
             <motion.div 
               className="bg-gradient-to-r from-blue-500 via-yellow-500 to-red-500 h-2 rounded-full relative"
               initial={{ width: "0%" }}
-              animate={{ width: `${progress}%` }}
+              animate={{ width: debateStatusData?.status === "judging" ? "100%" : `${progress}%` }}
               transition={{ duration: 0.5 }}
             >
               <div className="absolute -right-2 -top-1 w-4 h-4 bg-white rounded-full shadow-lg shadow-yellow-500/50" />
@@ -631,7 +661,16 @@ export default function DebatePage() {
           </div>
         </div>
         
-        {(isThinking || streamingText) && (
+        {debateStatusData?.status === "judging" ? (
+          <div className="bg-yellow-900/30 p-4 rounded-lg border border-yellow-800">
+            <div className="flex items-center justify-center space-x-3">
+              <div className="w-3 h-3 bg-yellow-500 rounded-full animate-pulse" />
+              <span className="text-xl font-medium text-yellow-400">
+                评委正在仔细评分...
+              </span>
+            </div>
+          </div>
+        ) : (isThinking || streamingText) && (
           <div className="bg-black/30 p-4 rounded-lg border border-gray-800">
             <div className="flex items-center justify-center space-x-3">
               {isThinking ? (
@@ -648,14 +687,7 @@ export default function DebatePage() {
                     {debateStatusData?.currentStreamingSide === "pro" ? "正方" : "反方"}正在回应...
                   </span>
                 </>
-              ) : (
-                <>
-                  <div className="w-3 h-3 bg-blue-500 rounded-full" />
-                  <span className="text-xl font-medium text-blue-400">
-                    等待{debateStatusData?.currentStreamingSide === "pro" ? "正方" : "反方"}发言
-                  </span>
-                </>
-              )}
+              ) : null}
             </div>
           </div>
         )}
@@ -824,39 +856,149 @@ export default function DebatePage() {
             transition={{ delay: index * 0.1 }}
           >
             <Card className="bg-black/50 backdrop-blur-md border-gray-800 p-6">
-              <h3 className="font-semibold text-yellow-400 text-lg mb-4 flex items-center gap-2">
-                <Trophy className="h-5 w-5" />
-                {judge.name}
-              </h3>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">正方</span>
-                    <span className="text-sm font-medium text-blue-400">{judge.score.pro.toFixed(1)}分</span>
+              {/* 评委名称和总分 */}
+              <div className="border-b border-gray-800 pb-4 mb-4">
+                <h3 className="font-semibold text-yellow-400 text-lg mb-4 flex items-center gap-2">
+                  <Trophy className="h-5 w-5" />
+                  {judge.name}
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">正方总分</span>
+                      <span className="text-lg font-medium text-blue-400">{judge.score.pro.toFixed(1)}分</span>
+                    </div>
+                    <div className="w-full bg-gray-900 rounded-full h-2">
+                      <motion.div
+                        className="bg-blue-500 h-2 rounded-full"
+                        initial={{ width: "0%" }}
+                        animate={{ width: `${judge.score.pro}%` }}
+                        transition={{ duration: 0.5 }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full bg-gray-900 rounded-full h-2">
-                    <motion.div
-                      className="bg-blue-500 h-2 rounded-full"
-                      initial={{ width: "0%" }}
-                      animate={{ width: `${judge.score.pro}%` }}
-                      transition={{ duration: 0.5 }}
-                    />
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">反方总分</span>
+                      <span className="text-lg font-medium text-red-400">{judge.score.con.toFixed(1)}分</span>
+                    </div>
+                    <div className="w-full bg-gray-900 rounded-full h-2">
+                      <motion.div
+                        className="bg-red-500 h-2 rounded-full"
+                        initial={{ width: "0%" }}
+                        animate={{ width: `${judge.score.con}%` }}
+                        transition={{ duration: 0.5 }}
+                      />
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm">反方</span>
-                    <span className="text-sm font-medium text-red-400">{judge.score.con.toFixed(1)}分</span>
-                  </div>
-                  <div className="w-full bg-gray-900 rounded-full h-2">
-                    <motion.div
-                      className="bg-red-500 h-2 rounded-full"
-                      initial={{ width: "0%" }}
-                      animate={{ width: `${judge.score.con}%` }}
-                      transition={{ duration: 0.5 }}
-                    />
+              </div>
+
+              {/* 详细评分 */}
+              <div className="space-y-6">
+                {/* 正方详细评分 */}
+                <div className="space-y-4">
+                  <h4 className="text-blue-400 font-medium">正方评分详情</h4>
+                  <div className="grid grid-cols-1 gap-4">
+                    {Object.entries(judge.detailedScores.pro).map(([category, score]) => (
+                      <div key={category} className="bg-black/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-gray-400">
+                            {category === "logic" ? "论点逻辑性" :
+                             category === "evidence" ? "论据相关性" :
+                             category === "rebuttal" ? "反驳有效性" :
+                             "表达说服力"}
+                          </span>
+                          <span className="text-blue-400 font-medium">{score.toFixed(1)}分</span>
+                        </div>
+                        <p className="text-sm text-gray-300 mt-2">
+                          {judge.scoreReasons?.pro[category as ScoreCategory]}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </div>
+
+                {/* 反方详细评分 */}
+                <div className="space-y-4">
+                  <h4 className="text-red-400 font-medium">反方评分详情</h4>
+                  <div className="grid grid-cols-1 gap-4">
+                    {Object.entries(judge.detailedScores.con).map(([category, score]) => (
+                      <div key={category} className="bg-black/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-gray-400">
+                            {category === "logic" ? "论点逻辑性" :
+                             category === "evidence" ? "论据相关性" :
+                             category === "rebuttal" ? "反驳有效性" :
+                             "表达说服力"}
+                          </span>
+                          <span className="text-red-400 font-medium">{score.toFixed(1)}分</span>
+                        </div>
+                        <p className="text-sm text-gray-300 mt-2">
+                          {judge.scoreReasons?.con[category as ScoreCategory]}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 总评 */}
+                {judge.overallComment && (
+                  <div className="border-t border-gray-800 pt-4 mt-4">
+                    <h4 className="text-yellow-400 font-medium mb-3">总评</h4>
+                    <p className="text-gray-300 text-sm leading-relaxed">
+                      {judge.overallComment}
+                    </p>
+                  </div>
+                )}
+
+                {/* 评委推荐 */}
+                {judge.recommendedWinner && (
+                  <div className="border-t border-gray-800 pt-4 mt-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Trophy className="h-4 w-4 text-yellow-400" />
+                      <h4 className="text-yellow-400 font-medium">
+                        推荐获胜方：
+                        <span className={judge.recommendedWinner.side === "pro" ? "text-blue-400" : "text-red-400"}>
+                          {judge.recommendedWinner.side === "pro" ? "正方" : "反方"}
+                        </span>
+                      </h4>
+                    </div>
+                    <p className="text-gray-300 text-sm leading-relaxed">
+                      {judge.recommendedWinner.reason}
+                    </p>
+                  </div>
+                )}
+
+                {/* 亮点与建议 */}
+                {judge.commentHighlights && (
+                  <div className="border-t border-gray-800 pt-4 mt-4 grid grid-cols-1 gap-4">
+                    <div>
+                      <h4 className="text-green-400 font-medium mb-2">亮点</h4>
+                      <ul className="list-disc list-inside space-y-1">
+                        {judge.commentHighlights.pros.map((pro, i) => (
+                          <li key={i} className="text-gray-300 text-sm">{pro}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <h4 className="text-orange-400 font-medium mb-2">不足</h4>
+                      <ul className="list-disc list-inside space-y-1">
+                        {judge.commentHighlights.cons.map((con, i) => (
+                          <li key={i} className="text-gray-300 text-sm">{con}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <h4 className="text-purple-400 font-medium mb-2">建议</h4>
+                      <ul className="list-disc list-inside space-y-1">
+                        {judge.commentHighlights.suggestions.map((suggestion, i) => (
+                          <li key={i} className="text-gray-300 text-sm">{suggestion}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
               </div>
             </Card>
           </motion.div>

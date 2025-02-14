@@ -181,7 +181,15 @@ export class DebateManager {
         this.currentRound++; // 移动到这里，确保每轮结束后才增加轮次
       }
 
+      // 辩论结束，更新状态
+      this.state.status = "judging";
+      this.notifyStateChange();
+      this.notifyProgressChange(null);
       console.log("All rounds completed, starting judging");
+      
+      // 给用户一个短暂的过渡时间来看到辩论结束的状态
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       await this.runJudging();
       this.state.status = "completed";
       this.notifyStateChange();
@@ -216,7 +224,8 @@ export class DebateManager {
 
       this.onProgressChange({
         ...this.getProgress(),
-        scoringAnimation: currentAnimation
+        scoringAnimation: currentAnimation,
+        debateStatus: this.state.status
       });
     }
   }
@@ -298,49 +307,95 @@ export class DebateManager {
       revealProgress: 0
     });
 
-    // 逐个评委进行评分，以展示动画效果
-    const judgeResults = [];
-    for (let i = 0; i < this.judges.length; i++) {
-      // 更新当前评委状态
-      this.updateScoringAnimation({
-        phase: "judge_thinking",
-        currentJudge: i + 1,
-        totalJudges: this.judges.length,
-        revealProgress: (i / this.judges.length) * 100
-      });
+    // 并行处理所有评委的评分
+    const judgePromises = this.judges.map(async (judge, index) => {
+      try {
+        // 更新当前评委状态
+        this.updateScoringAnimation({
+          phase: "judge_thinking",
+          currentJudge: index + 1,
+          totalJudges: this.judges.length,
+          revealProgress: (index / this.judges.length) * 100
+        });
 
-      // 等待当前评委评分
-      const result = await this.judges[i].evaluate(this.state.topic, this.state.messages);
-      judgeResults.push(result);
+        // 等待当前评委评分
+        const result = await judge.evaluate(this.state.topic, this.state.messages);
+        
+        // 展示评分结果
+        this.updateScoringAnimation({
+          phase: "revealing_scores",
+          currentJudge: index + 1,
+          totalJudges: this.judges.length,
+          revealProgress: ((index + 1) / this.judges.length) * 100,
+          highlightedScore: {
+            side: "pro",
+            score: result.score.pro
+          }
+        });
+        await new Promise(resolve => setTimeout(resolve, 800));
 
-      // 展示评分结果
-      this.updateScoringAnimation({
-        phase: "revealing_scores",
-        currentJudge: i + 1,
-        totalJudges: this.judges.length,
-        revealProgress: ((i + 1) / this.judges.length) * 100,
-        highlightedScore: {
-          side: "pro",
-          score: result.score.pro
-        }
-      });
-      await new Promise(resolve => setTimeout(resolve, 800));
+        this.updateScoringAnimation({
+          phase: "revealing_scores",
+          currentJudge: index + 1,
+          totalJudges: this.judges.length,
+          revealProgress: ((index + 1) / this.judges.length) * 100,
+          highlightedScore: {
+            side: "con",
+            score: result.score.con
+          }
+        });
+        await new Promise(resolve => setTimeout(resolve, 800));
 
-      this.updateScoringAnimation({
-        phase: "revealing_scores",
-        currentJudge: i + 1,
-        totalJudges: this.judges.length,
-        revealProgress: ((i + 1) / this.judges.length) * 100,
-        highlightedScore: {
-          side: "con",
-          score: result.score.con
-        }
-      });
-      await new Promise(resolve => setTimeout(resolve, 800));
-    }
+        return result;
+      } catch (error) {
+        console.error(`评委${judge.getName()}评分失败:`, error);
+        // 返回默认评分
+        return {
+          name: judge.getName(),
+          score: { pro: 75, con: 75 },
+          detailedScores: {
+            pro: { logic: 75, evidence: 75, rebuttal: 75, expression: 75 },
+            con: { logic: 75, evidence: 75, rebuttal: 75, expression: 75 }
+          },
+          comment: `评委${judge.getName()}评分过程中遇到技术问题，已使用默认评分。`,
+          commentHighlights: {
+            pros: ["技术原因，未能完成详细点评"],
+            cons: ["技术原因，未能完成详细点评"],
+            suggestions: ["建议重新进行评分"]
+          },
+          scoreReasons: {
+            pro: {
+              logic: "评分失败",
+              evidence: "评分失败",
+              rebuttal: "评分失败",
+              expression: "评分失败"
+            },
+            con: {
+              logic: "评分失败",
+              evidence: "评分失败",
+              rebuttal: "评分失败",
+              expression: "评分失败"
+            }
+          },
+          overallComment: "评分过程中遇到技术问题",
+          recommendedWinner: null,
+          animationState: {
+            isScoring: false,
+            currentCategory: "logic",
+            scoreRevealProgress: 100,
+            phase: "completed"
+          }
+        };
+      }
+    });
 
-    // 保存评委结果
-    this.state.judges = judgeResults;
+    // 等待所有评委完成评分
+    const judgeResults = await Promise.allSettled(judgePromises);
+    
+    // 过滤出成功的评分结果
+    this.state.judges = judgeResults
+      .filter((result): result is PromiseFulfilledResult<Judge> => result.status === 'fulfilled')
+      .map(result => result.value);
 
     // 计算最终分数
     this.updateScoringAnimation({

@@ -18,10 +18,11 @@ export interface DifyConfig {
 export class DifyClient {
   private apiKey: string;
   private baseUrl = "https://api.dify.ai/v1";
-  private maxRetries = 3;
-  private retryDelay = 2000; // Increased from 1000ms to 2000ms
+  private maxRetries = 5;
+  private retryDelay = 3000;
   private lastRequestTime: number = 0;
-  private minRequestInterval = 1000; // Increased from 500ms to 1000ms
+  private minRequestInterval = 1500;
+  private timeout = 60000;
 
   constructor(config: DifyConfig) {
     this.apiKey = config.apiKey;
@@ -41,15 +42,16 @@ export class DifyClient {
   }
 
   private shouldRetry(error: any): boolean {
-    // Check for specific error codes that warrant a retry
-    const retryableStatusCodes = [408, 429, 500, 502, 503, 504];
+    const retryableStatusCodes = [408, 429, 500, 502, 503, 504, 520, 521, 522, 524];
     const errorStatus = error?.response?.status || 
                        (error?.message?.includes('504') ? 504 : null) ||
                        (error?.message?.includes('timeout') ? 408 : null);
     
     return retryableStatusCodes.includes(errorStatus) ||
            error?.message?.toLowerCase().includes('timeout') ||
-           error?.message?.toLowerCase().includes('econnreset');
+           error?.message?.toLowerCase().includes('econnreset') ||
+           error?.message?.toLowerCase().includes('network error') ||
+           error?.message?.toLowerCase().includes('failed to fetch');
   }
 
   private async handleStreamResponse(
@@ -124,69 +126,76 @@ export class DifyClient {
 
         if (attempt > 0) {
           console.log(`Retry attempt ${attempt + 1} for ${role}...`);
-          // Exponential backoff with jitter
-          const jitter = Math.random() * 1000;
+          const jitter = Math.random() * 2000;
           const delay = (this.retryDelay * Math.pow(2, attempt)) + jitter;
           await this.delay(delay);
         }
 
         console.log(`Sending request to Dify API as ${role}...`);
-        const response = await fetch(`${this.baseUrl}/chat-messages`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            inputs: {
-              role: role,
-              context: message
-            },
-            query: message,
-            response_mode: streamCallback ? "streaming" : "blocking",
-            conversation_id: conversationId,
-            user: role === "pro" ? "pro-debater" : role === "con" ? "con-debater" : "judge",
-          }),
-          // Add timeout
-          signal: AbortSignal.timeout(30000), // 30 second timeout
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("Dify API error response:", {
-            status: response.status,
-            statusText: response.statusText,
-            body: errorText
+        try {
+          const response = await fetch(`${this.baseUrl}/chat-messages`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${this.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              inputs: {
+                role: role,
+                context: message
+              },
+              query: message,
+              response_mode: streamCallback ? "streaming" : "blocking",
+              conversation_id: conversationId,
+              user: role === "pro" ? "pro-debater" : role === "con" ? "con-debater" : "judge",
+            }),
+            signal: controller.signal,
           });
 
-          const error = new Error(`Dify API error: ${response.status} ${response.statusText}`);
-          if (this.shouldRetry({ response, message: errorText })) {
-            lastError = error;
-            continue;
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Dify API error response:", {
+              status: response.status,
+              statusText: response.statusText,
+              body: errorText
+            });
+
+            const error = new Error(`Dify API error: ${response.status} ${response.statusText}`);
+            if (this.shouldRetry({ response, message: errorText })) {
+              lastError = error;
+              continue;
+            }
+            throw error;
           }
-          throw error;
-        }
 
-        if (streamCallback) {
-          const reader = response.body?.getReader();
-          if (!reader) {
-            throw new Error("Failed to get response reader");
+          if (streamCallback) {
+            const reader = response.body?.getReader();
+            if (!reader) {
+              throw new Error("Failed to get response reader");
+            }
+            return await this.handleStreamResponse(reader, streamCallback);
           }
-          return await this.handleStreamResponse(reader, streamCallback);
-        }
 
-        const data = await response.json();
-        if (!data.answer) {
-          console.error("Unexpected Dify API response:", data);
-          throw new Error("Invalid response from Dify API: missing answer");
-        }
+          const data = await response.json();
+          if (!data.answer) {
+            console.error("Unexpected Dify API response:", data);
+            throw new Error("Invalid response from Dify API: missing answer");
+          }
 
-        console.log(`Received response from Dify API for ${role}`);
-        return {
-          answer: data.answer,
-          conversation_id: data.conversation_id || "",
-          id: data.id || "",
-        };
+          console.log(`Received response from Dify API for ${role}`);
+          return {
+            answer: data.answer,
+            conversation_id: data.conversation_id || "",
+            id: data.id || "",
+          };
+        } finally {
+          clearTimeout(timeoutId);
+        }
       } catch (error) {
         console.error(`Error in Dify API call (attempt ${attempt + 1}):`, error);
         lastError = error as Error;

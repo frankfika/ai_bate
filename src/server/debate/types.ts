@@ -58,6 +58,25 @@ export interface Judge {
     cons: string[];
     suggestions: string[];
   };
+  scoreReasons: {
+    pro: {
+      logic: string;
+      evidence: string;
+      rebuttal: string;
+      expression: string;
+    };
+    con: {
+      logic: string;
+      evidence: string;
+      rebuttal: string;
+      expression: string;
+    };
+  };
+  overallComment: string;
+  recommendedWinner?: {
+    side: "pro" | "con";
+    reason: string;
+  } | null;
   animationState?: {
     isScoring: boolean;
     currentCategory?: ScoreCategory;
@@ -75,13 +94,14 @@ export interface DebateProgress {
   streamingText: string;
   currentStreamingSide: "pro" | "con" | null;
   scoringAnimation?: ScoringAnimation;
+  debateStatus?: "pending" | "in_progress" | "judging" | "completed" | "error";
 }
 
 export interface DebateState {
   id: string;
   topic: string;
   background: string;
-  status: "pending" | "in_progress" | "completed" | "error";
+  status: "pending" | "in_progress" | "judging" | "completed" | "error";
   messages: DebateMessage[];
   judges: Judge[];
   winner: "pro" | "con" | null;
